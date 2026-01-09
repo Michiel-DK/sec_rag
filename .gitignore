@@ -1,1 +1,14 @@
 .env
+.envrc
+10k_filings/*
+.python-version
+
+*.csv
+tickers/
+notebooks/
+
+*__pycache__*
+*.egg*
+
+chroma_db/
+chroma_db_test/
