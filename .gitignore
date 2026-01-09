@@ -1,1 +1,3 @@
 .env
+.envrc
+10k_filings/*
