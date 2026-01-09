@@ -6,14 +6,14 @@ This script reads a CSV file with company information and downloads 10-K filings
 CSV should have columns: ticker, cik (optional), company_name (optional)
 """
 
-import edgar
+from edgar import *
 import pandas as pd
 import os
 import time
 from pathlib import Path
 
 # Set your identity for SEC EDGAR (REQUIRED)
-edgar.set_identity(os.getenv('EDGAR_IDENTITY'))
+set_identity("Your Name your.email@example.com")
 
 
 def download_10k_from_csv(
@@ -47,15 +47,11 @@ def download_10k_from_csv(
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     
-    # Prepare company list
+    # Prepare company list  
     companies = []
     for _, row in df.iterrows():
         ticker = row['ticker']
-        cik = row.get('cik', None)
-        if cik and pd.notna(cik):
-            companies.append((ticker, str(cik)))
-        else:
-            companies.append(ticker)
+        companies.append(ticker)
     
     # Download filings
     results = {
@@ -64,14 +60,7 @@ def download_10k_from_csv(
         "no_filings": []
     }
     
-    for i, company in enumerate(companies, 1):
-        # Handle different input formats
-        if isinstance(company, tuple):
-            ticker, cik = company
-        else:
-            ticker = company
-            cik = None
-        
+    for i, ticker in enumerate(companies, 1):
         print(f"\n[{i}/{len(companies)}] Processing {ticker}...")
         
         try:
@@ -80,37 +69,44 @@ def download_10k_from_csv(
             company_dir.mkdir(exist_ok=True)
             
             # Get company object
-            if cik:
-                company_obj = edgar.Company(ticker, cik)
-            else:
-                company_obj = edgar.Company(ticker)
+            company = Company(ticker)
+            print(f"  Company: {company.name}")
             
             # Get filings
             print(f"  Fetching {filing_type} filings...")
-            tree = company_obj.get_filings(form_type=filing_type)
-            filings = tree.get_documents()
+            filings_result = company.get_filings(form=filing_type).latest(num_filings)
             
-            if not filings:
-                print(f"  ⚠️  No {filing_type} filings found for {ticker}")
-                results["no_filings"].append(ticker)
-                continue
+            # Handle single filing vs multiple filings
+            if num_filings == 1:
+                # latest(1) returns a single EntityFiling object
+                if not filings_result:
+                    print(f"  ⚠️  No {filing_type} filings found for {ticker}")
+                    results["no_filings"].append(ticker)
+                    continue
+                filings = [filings_result]  # Wrap in list
+            else:
+                # latest(n) where n>1 returns a Filings collection
+                filings = list(filings_result)
+                if not filings or len(filings) == 0:
+                    print(f"  ⚠️  No {filing_type} filings found for {ticker}")
+                    results["no_filings"].append(ticker)
+                    continue
             
-            # Limit to requested number
-            filings_to_download = filings[:num_filings]
-            print(f"  Found {len(filings)} filings, downloading {len(filings_to_download)}...")
+            print(f"  Found filings, downloading {len(filings)}...")
             
             # Download each filing
-            for j, filing in enumerate(filings_to_download, 1):
-                filing_date = filing.filing_date if hasattr(filing, 'filing_date') else f"filing_{j}"
-                filename = f"{ticker}_{filing_type}_{filing_date}.txt"
+            for j, filing in enumerate(filings, 1):
+                filing_date = filing.filing_date
+                accession = filing.accession_no.replace("-", "")
+                filename = f"{ticker}_{filing_type}_{filing_date}_{accession[:10]}.txt"
                 filepath = company_dir / filename
                 
-                # Download content
-                content = filing.get_content()
+                # Get the filing text
+                text = filing.text()
                 
                 # Save to file
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                    f.write(text)
                 
                 print(f"    ✓ Downloaded: {filename}")
                 time.sleep(delay)
@@ -169,7 +165,7 @@ def create_sample_csv():
 def main():
     print("Bulk 10-K Downloader from CSV")
     print("="*60)
-    print("\nIMPORTANT: Update edgar.set_identity() with your information")
+    print("\nIMPORTANT: Update set_identity() with your information")
     print("before running this script.\n")
     
     # Create sample CSV if it doesn't exist

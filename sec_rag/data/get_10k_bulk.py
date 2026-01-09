@@ -62,12 +62,23 @@ def download_10k_filings(
             
             # Get filings
             print(f"  Fetching {filing_type} filings...")
-            filings = company.get_filings(form=filing_type).latest(num_filings)
+            filings_result = company.get_filings(form=filing_type).latest(num_filings)
             
-            if not filings or len(filings) == 0:
-                print(f"  ⚠️  No {filing_type} filings found for {ticker}")
-                results["no_filings"].append(ticker)
-                continue
+            # Handle single filing vs multiple filings
+            if num_filings == 1:
+                # latest(1) returns a single EntityFiling object
+                if not filings_result:
+                    print(f"  ⚠️  No {filing_type} filings found for {ticker}")
+                    results["no_filings"].append(ticker)
+                    continue
+                filings = [filings_result]  # Wrap in list
+            else:
+                # latest(n) where n>1 returns a Filings collection
+                filings = list(filings_result)
+                if not filings or len(filings) == 0:
+                    print(f"  ⚠️  No {filing_type} filings found for {ticker}")
+                    results["no_filings"].append(ticker)
+                    continue
             
             print(f"  Found filings, downloading {len(filings)}...")
             
