@@ -9,3 +9,6 @@ notebooks/
 
 *__pycache__*
 *.egg*
+
+chroma_db/
+chroma_db_test/
