@@ -22,7 +22,8 @@ class CompanySimilarity:
     dimension: str
     score: float
     match_count: int
-    sample_chunks: List[str]  # Sample relevant chunks
+    confidence: str  # NEW: "high", "medium", "low"
+    sample_chunks: List[str]
 
 @dataclass
 class CompanyRanking:
@@ -31,6 +32,109 @@ class CompanyRanking:
     overall_score: float
     dimension_scores: Dict[str, float]
     total_matches: int
+    confidence: str  # NEW: "high", "medium", "low"str, float]
+    total_matches: int
+    
+def calculate_confidence(score: float, match_count: int, dimension: str = None) -> str:
+    """
+    Calculate confidence level for similarity scores.
+    
+    Args:
+        score: Normalized similarity score (0-1 for overall, higher for dimensions)
+        match_count: Number of matching chunks found
+        dimension: Optional dimension name for dimension-specific thresholds
+    
+    Returns:
+        Confidence level: "high", "medium", or "low"
+    
+    Confidence Criteria:
+    - HIGH: Strong evidence with many matches
+    - MEDIUM: Moderate evidence with some matches  
+    - LOW: Weak evidence with few matches
+    """
+    if dimension:
+        # Dimension-specific thresholds
+        # Dimensions have scores > 1, so use higher thresholds
+        if score >= 8.0 and match_count >= 8:
+            return "high"
+        elif score >= 4.0 and match_count >= 4:
+            return "medium"
+        else:
+            return "low"
+    else:
+        # Overall score thresholds (scores are 0-1 range)
+        if score >= 0.7 and match_count >= 20:
+            return "high"
+        elif score >= 0.4 and match_count >= 10:
+            return "medium"
+        else:
+            return "low"
+
+
+# Update the find_similar_by_dimension method to include confidence:
+
+def find_similar_by_dimension(
+    self,
+    dimension: DimensionQuery,
+    exclude_tickers: Optional[List[str]] = None
+) -> List[CompanySimilarity]:
+    """
+    Find similar companies for a specific dimension.
+    NOW WITH CONFIDENCE SCORES!
+    """
+    exclude_tickers = exclude_tickers or []
+    
+    logger.info(f"Searching dimension: {dimension.dimension}")
+    logger.info(f"  Queries: {len(dimension.queries)}")
+    logger.info(f"  Sections: {dimension.sections}")
+    
+    # Aggregate results across all queries in this dimension
+    company_matches = defaultdict(lambda: {
+        'score': 0.0,
+        'count': 0,
+        'chunks': []
+    })
+    
+    for query_text in dimension.queries:
+        logger.debug(f"  Query: {query_text[:60]}...")
+        
+        results = self._search_with_fallback(query_text, dimension.sections)
+        
+        for doc in results:
+            ticker = doc.metadata.get('ticker', 'Unknown')
+            
+            if ticker in exclude_tickers or ticker == 'Unknown':
+                continue
+            
+            company_matches[ticker]['score'] += 1.0
+            company_matches[ticker]['count'] += 1
+            company_matches[ticker]['chunks'].append(doc.page_content[:200])
+    
+    # Convert to CompanySimilarity objects WITH CONFIDENCE
+    similarities = []
+    for ticker, data in company_matches.items():
+        if data['count'] >= self.min_matches:
+            # Calculate confidence for this dimension score
+            confidence = calculate_confidence(
+                score=data['score'],
+                match_count=data['count'],
+                dimension=dimension.dimension
+            )
+            
+            similarities.append(CompanySimilarity(
+                ticker=ticker,
+                dimension=dimension.dimension,
+                score=data['score'],
+                match_count=data['count'],
+                confidence=confidence,  # NEW
+                sample_chunks=data['chunks'][:3]
+            ))
+    
+    similarities.sort(key=lambda x: x.score, reverse=True)
+    
+    logger.info(f"  Found {len(similarities)} companies with >= {self.min_matches} matches")
+    
+    return similarities
 
 class SimilarityEngine:
     """
@@ -62,13 +166,7 @@ class SimilarityEngine:
     ) -> List[CompanySimilarity]:
         """
         Find similar companies for a specific dimension.
-        
-        Args:
-            dimension: The dimension to compare (business, risk, etc.)
-            exclude_tickers: Tickers to exclude from results
-        
-        Returns:
-            List of CompanySimilarity results, sorted by score
+        NOW WITH CONFIDENCE SCORES!
         """
         exclude_tickers = exclude_tickers or []
         
@@ -86,34 +184,38 @@ class SimilarityEngine:
         for query_text in dimension.queries:
             logger.debug(f"  Query: {query_text[:60]}...")
             
-            # Search with section filtering if not "Unknown"
             results = self._search_with_fallback(query_text, dimension.sections)
             
             for doc in results:
                 ticker = doc.metadata.get('ticker', 'Unknown')
                 
-                # Skip excluded tickers
                 if ticker in exclude_tickers or ticker == 'Unknown':
                     continue
                 
-                # Accumulate matches
                 company_matches[ticker]['score'] += 1.0
                 company_matches[ticker]['count'] += 1
                 company_matches[ticker]['chunks'].append(doc.page_content[:200])
         
-        # Convert to CompanySimilarity objects
+        # Convert to CompanySimilarity objects WITH CONFIDENCE
         similarities = []
         for ticker, data in company_matches.items():
             if data['count'] >= self.min_matches:
+                # Calculate confidence for this dimension score
+                confidence = calculate_confidence(
+                    score=data['score'],
+                    match_count=data['count'],
+                    dimension=dimension.dimension
+                )
+                
                 similarities.append(CompanySimilarity(
                     ticker=ticker,
                     dimension=dimension.dimension,
                     score=data['score'],
                     match_count=data['count'],
-                    sample_chunks=data['chunks'][:3]  # Keep top 3 sample chunks
+                    confidence=confidence,  # NEW
+                    sample_chunks=data['chunks'][:3]
                 ))
         
-        # Sort by score (descending)
         similarities.sort(key=lambda x: x.score, reverse=True)
         
         logger.info(f"  Found {len(similarities)} companies with >= {self.min_matches} matches")
@@ -161,14 +263,7 @@ class SimilarityEngine:
     ) -> List[CompanyRanking]:
         """
         Find companies similar across multiple dimensions.
-        
-        Args:
-            target_ticker: Ticker to compare against (None = compare all to all)
-            dimensions: Which dimensions to compare (None = all)
-            top_n: Return top N most similar companies
-        
-        Returns:
-            List of CompanyRanking results, sorted by overall similarity
+        NOW WITH CONFIDENCE SCORES!
         """
         # Get dimensions to compare
         if dimensions is None:
@@ -184,7 +279,6 @@ class SimilarityEngine:
         logger.info(f"  Dimensions: {[d.dimension for d in dimension_queries]}")
         logger.info("=" * 80)
         
-        # Exclude target ticker from results if specified
         exclude = [target_ticker] if target_ticker else []
         
         # Search each dimension
@@ -209,29 +303,34 @@ class SimilarityEngine:
             for similarity in data['results']:
                 ticker = similarity.ticker
                 
-                # Normalize score by max score in this dimension
                 max_score = max([s.score for s in data['results']], default=1.0)
                 normalized_score = similarity.score / max_score if max_score > 0 else 0
                 
-                # Add weighted score
                 company_scores[ticker]['weighted_score'] += normalized_score * weight
                 company_scores[ticker]['total_matches'] += similarity.match_count
                 company_scores[ticker]['dimension_scores'][dimension] = normalized_score
         
-        # Convert to CompanyRanking objects
+        # Convert to CompanyRanking objects WITH CONFIDENCE
         rankings = []
         for ticker, data in company_scores.items():
+            # Calculate overall confidence
+            confidence = calculate_confidence(
+                score=data['weighted_score'],
+                match_count=data['total_matches']
+            )
+            
             rankings.append(CompanyRanking(
                 ticker=ticker,
                 overall_score=data['weighted_score'],
                 dimension_scores=data['dimension_scores'],
-                total_matches=data['total_matches']
+                total_matches=data['total_matches'],
+                confidence=confidence  # NEW
             ))
         
-        # Sort by overall score
         rankings.sort(key=lambda x: x.overall_score, reverse=True)
         
         return rankings[:top_n]
+
     
     def explain_similarity(
         self,

@@ -4,6 +4,7 @@ Test the similarity engine with real queries.
 
 import logging
 from sec_rag.similarity.similarity_engine import load_similarity_engine, ComparisonDimensions
+from sec_rag.llm.similarity_explainer import create_explainer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -127,6 +128,98 @@ def test_explain_similarity():
     for i, chunk in enumerate(explanation['WMT_chunks'][:3], 1):
         logger.info(f"\n  {i}. {chunk[:300]}...")
 
+def test_confidence_scores():
+    """Test that confidence scores are calculated correctly."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 6: Confidence Score Validation")
+    logger.info("=" * 80)
+    
+    engine = load_similarity_engine()
+    
+    rankings = engine.find_similar_companies(top_n=10)
+    
+    logger.info("\nCompanies by confidence level:")
+    
+    high_conf = [r for r in rankings if r.confidence == "high"]
+    medium_conf = [r for r in rankings if r.confidence == "medium"]
+    low_conf = [r for r in rankings if r.confidence == "low"]
+    
+    logger.info(f"\nHigh Confidence ({len(high_conf)} companies):")
+    for r in high_conf[:3]:
+        logger.info(f"  {r.ticker}: Score={r.overall_score:.3f}, Matches={r.total_matches}")
+    
+    logger.info(f"\nMedium Confidence ({len(medium_conf)} companies):")
+    for r in medium_conf[:3]:
+        logger.info(f"  {r.ticker}: Score={r.overall_score:.3f}, Matches={r.total_matches}")
+    
+    logger.info(f"\nLow Confidence ({len(low_conf)} companies):")
+    for r in low_conf[:3]:
+        logger.info(f"  {r.ticker}: Score={r.overall_score:.3f}, Matches={r.total_matches}")
+
+def test_llm_explanation():
+    """Test LLM-generated explanations."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 7: LLM Explanation Generation")
+    logger.info("=" * 80)
+    
+    # Load engine and create explainer
+    engine = load_similarity_engine()
+    explainer = create_explainer(engine.vector_store)
+    
+    # Test explanation for AMZN vs MSFT
+    logger.info("\nGenerating explanation: AMZN vs MSFT (business_model)")
+    logger.info("This may take 5-10 seconds...")
+    
+    explanation = explainer.explain_similarity(
+        ticker1="AMZN",
+        ticker2="MSFT",
+        dimension="business_model"
+    )
+    
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Comparison: {explanation.ticker1} vs {explanation.ticker2}")
+    logger.info(f"Dimension: {explanation.dimension}")
+    logger.info(f"Confidence: {explanation.confidence}")
+    logger.info(f"{'='*60}")
+    
+    logger.info(f"\nEXPLANATION:")
+    logger.info(f"{explanation.explanation}")
+    
+    logger.info(f"\nKEY SIMILARITIES:")
+    for i, sim in enumerate(explanation.key_similarities, 1):
+        logger.info(f"  {i}. {sim}")
+    
+    logger.info(f"\nKEY DIFFERENCES:")
+    for i, diff in enumerate(explanation.key_differences, 1):
+        logger.info(f"  {i}. {diff}")
+
+def test_multiple_explanations():
+    """Test explanations across different dimensions."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 8: Multi-Dimension Explanations")
+    logger.info("=" * 80)
+    
+    engine = load_similarity_engine()
+    explainer = create_explainer(engine.vector_store)
+    
+    # Test different dimension explanations
+    test_cases = [
+        ("MA", "V", "business_model"),
+        ("AAPL", "MSFT", "risk_profile"),
+        ("TSLA", "NVDA", "financial_structure"),
+    ]
+    
+    for ticker1, ticker2, dimension in test_cases:
+        logger.info(f"\n{'-'*60}")
+        logger.info(f"Explaining: {ticker1} vs {ticker2} ({dimension})")
+        logger.info(f"{'-'*60}")
+        
+        explanation = explainer.explain_similarity(ticker1, ticker2, dimension)
+        
+        logger.info(f"\nConfidence: {explanation.confidence}")
+        logger.info(f"\n{explanation.explanation}")
+        logger.info(f"\nTop Similarity: {explanation.key_similarities[0] if explanation.key_similarities else 'N/A'}")
+
 if __name__ == "__main__":
     # Run all tests
     try:
@@ -135,6 +228,9 @@ if __name__ == "__main__":
         test_target_company()
         test_specific_dimensions()
         test_explain_similarity()
+        test_confidence_scores()  # NEW
+        test_llm_explanation()    # NEW
+        test_multiple_explanations()  # NEW
         
         logger.info("\n" + "=" * 80)
         logger.info("✓ ALL TESTS COMPLETED")
