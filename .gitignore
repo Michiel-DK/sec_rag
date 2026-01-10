@@ -12,3 +12,5 @@ notebooks/
 
 chroma_db/
 chroma_db_test/
+
+outputs/

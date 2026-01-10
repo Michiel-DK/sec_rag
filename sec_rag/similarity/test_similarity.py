@@ -1,8 +1,9 @@
 """
-Test the similarity engine with real queries.
+Test the similarity engine with confidence scores and LLM explanations.
 """
 
 import logging
+import time
 from sec_rag.similarity.similarity_engine import load_similarity_engine, ComparisonDimensions
 from sec_rag.llm.similarity_explainer import create_explainer
 
@@ -27,6 +28,7 @@ def test_single_dimension():
     for i, result in enumerate(results[:10], 1):
         logger.info(f"\n{i}. {result.ticker}")
         logger.info(f"   Score: {result.score:.2f}")
+        logger.info(f"   Confidence: {result.confidence}")  # NEW
         logger.info(f"   Matches: {result.match_count}")
         logger.info(f"   Sample: {result.sample_chunks[0][:100]}...")
 
@@ -47,6 +49,7 @@ def test_multi_dimensional():
     for i, ranking in enumerate(rankings, 1):
         logger.info(f"\n{i}. {ranking.ticker}")
         logger.info(f"   Overall Score: {ranking.overall_score:.3f}")
+        logger.info(f"   Confidence: {ranking.confidence}")  # NEW
         logger.info(f"   Total Matches: {ranking.total_matches}")
         logger.info(f"   Dimension Breakdown:")
         for dim, score in ranking.dimension_scores.items():
@@ -72,6 +75,7 @@ def test_target_company():
     for i, ranking in enumerate(rankings, 1):
         logger.info(f"\n{i}. {ranking.ticker}")
         logger.info(f"   Overall Score: {ranking.overall_score:.3f}")
+        logger.info(f"   Confidence: {ranking.confidence}")  # NEW
         logger.info(f"   Dimension Breakdown:")
         for dim, score in sorted(
             ranking.dimension_scores.items(),
@@ -100,6 +104,7 @@ def test_specific_dimensions():
     for i, ranking in enumerate(rankings, 1):
         logger.info(f"\n{i}. {ranking.ticker}")
         logger.info(f"   Overall Score: {ranking.overall_score:.3f}")
+        logger.info(f"   Confidence: {ranking.confidence}")  # NEW
         logger.info(f"   Risk Profile: {ranking.dimension_scores.get('risk_profile', 0):.3f}")
         logger.info(f"   Financial: {ranking.dimension_scores.get('financial_structure', 0):.3f}")
 
@@ -157,18 +162,23 @@ def test_confidence_scores():
         logger.info(f"  {r.ticker}: Score={r.overall_score:.3f}, Matches={r.total_matches}")
 
 def test_llm_explanation():
-    """Test LLM-generated explanations."""
+    """Test LLM-generated explanations (rate limited)."""
     logger.info("\n" + "=" * 80)
-    logger.info("TEST 7: LLM Explanation Generation")
+    logger.info("TEST 7: LLM Explanation Generation (with Caching)")
     logger.info("=" * 80)
     
     # Load engine and create explainer
     engine = load_similarity_engine()
-    explainer = create_explainer(engine.vector_store)
+    explainer = create_explainer(
+        engine.vector_store,
+        requests_per_minute=8
+    )
     
     # Test explanation for AMZN vs MSFT
     logger.info("\nGenerating explanation: AMZN vs MSFT (business_model)")
-    logger.info("This may take 5-10 seconds...")
+    logger.info("This may take 5-10 seconds if not cached...")
+    
+    start_time = time.time()
     
     explanation = explainer.explain_similarity(
         ticker1="AMZN",
@@ -176,10 +186,13 @@ def test_llm_explanation():
         dimension="business_model"
     )
     
+    elapsed = time.time() - start_time
+    
     logger.info(f"\n{'='*60}")
     logger.info(f"Comparison: {explanation.ticker1} vs {explanation.ticker2}")
     logger.info(f"Dimension: {explanation.dimension}")
     logger.info(f"Confidence: {explanation.confidence}")
+    logger.info(f"Generation Time: {elapsed:.2f}s")
     logger.info(f"{'='*60}")
     
     logger.info(f"\nEXPLANATION:")
@@ -196,11 +209,14 @@ def test_llm_explanation():
 def test_multiple_explanations():
     """Test explanations across different dimensions."""
     logger.info("\n" + "=" * 80)
-    logger.info("TEST 8: Multi-Dimension Explanations")
+    logger.info("TEST 8: Multi-Dimension Explanations (with Caching)")
     logger.info("=" * 80)
     
     engine = load_similarity_engine()
-    explainer = create_explainer(engine.vector_store)
+    explainer = create_explainer(
+        engine.vector_store,
+        requests_per_minute=8
+    )
     
     # Test different dimension explanations
     test_cases = [
@@ -214,28 +230,144 @@ def test_multiple_explanations():
         logger.info(f"Explaining: {ticker1} vs {ticker2} ({dimension})")
         logger.info(f"{'-'*60}")
         
+        start_time = time.time()
+        
         explanation = explainer.explain_similarity(ticker1, ticker2, dimension)
         
-        logger.info(f"\nConfidence: {explanation.confidence}")
+        elapsed = time.time() - start_time
+        
+        logger.info(f"\nTime: {elapsed:.2f}s")
+        logger.info(f"Confidence: {explanation.confidence}")
         logger.info(f"\n{explanation.explanation}")
         logger.info(f"\nTop Similarity: {explanation.key_similarities[0] if explanation.key_similarities else 'N/A'}")
+
+def test_explanation_caching():
+    """Test that explanations are cached and reused."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 9: Explanation Caching Verification")
+    logger.info("=" * 80)
+    
+    engine = load_similarity_engine()
+    explainer = create_explainer(
+        engine.vector_store,
+        requests_per_minute=8
+    )
+    
+    # First call - might generate or use cache
+    logger.info("\n1. First call for AAPL vs MSFT (business_model):")
+    start = time.time()
+    explanation1 = explainer.explain_similarity("AAPL", "MSFT", "business_model")
+    time1 = time.time() - start
+    logger.info(f"   Time: {time1:.2f}s")
+    logger.info(f"   Confidence: {explanation1.confidence}")
+    
+    # Second call - should definitely use cache (instant)
+    logger.info("\n2. Second call (should use cache):")
+    start = time.time()
+    explanation2 = explainer.explain_similarity("AAPL", "MSFT", "business_model")
+    time2 = time.time() - start
+    logger.info(f"   Time: {time2:.2f}s (should be <0.1s)")
+    logger.info(f"   Confidence: {explanation2.confidence}")
+    
+    # Verify they're the same
+    is_same = explanation1.explanation == explanation2.explanation
+    logger.info(f"\n✓ Explanations match: {is_same}")
+    
+    if time1 > 1.0:  # Only compare if first call wasn't cached
+        logger.info(f"✓ Cache speed up: {time1/time2:.1f}x faster")
+    
+    # Show cache stats
+    logger.info("\n3. Cache statistics:")
+    cache = explainer.cache
+    all_cached = cache.list_cached()
+    logger.info(f"   Total cached explanations: {len(all_cached)}")
+    
+    # Search cache by ticker
+    aapl_explanations = cache.search_cache(ticker="AAPL")
+    logger.info(f"   Explanations involving AAPL: {len(aapl_explanations)}")
+    
+    msft_explanations = cache.search_cache(ticker="MSFT")
+    logger.info(f"   Explanations involving MSFT: {len(msft_explanations)}")
+    
+    # Search by dimension
+    business_model_explanations = cache.search_cache(dimension="business_model")
+    logger.info(f"   Business model explanations: {len(business_model_explanations)}")
+    
+    # List some cached files
+    if all_cached:
+        logger.info("\n4. Sample cached files:")
+        for item in all_cached[:5]:  # Show first 5
+            logger.info(f"   {item['filename']}")
+            logger.info(f"     - Confidence: {item['confidence']}")
+            logger.info(f"     - Cached at: {item['cached_at'][:19]}")  # Trim timestamp
+    
+    # Show where files are saved
+    logger.info(f"\n5. Cache location:")
+    logger.info(f"   {cache.cache_dir.absolute()}")
+    logger.info(f"   You can open these .txt files to read the analyses!")
+
+def test_force_refresh():
+    """Test forcing regeneration of cached explanations."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 10: Force Refresh (Ignore Cache)")
+    logger.info("=" * 80)
+    
+    engine = load_similarity_engine()
+    explainer = create_explainer(
+        engine.vector_store,
+        requests_per_minute=8
+    )
+    
+    logger.info("\nTesting force_refresh parameter...")
+    logger.info("This regenerates even if cached (useful for testing)")
+    
+    start = time.time()
+    explanation = explainer.explain_similarity(
+        "GOOG", "META", "business_model",
+        force_refresh=True  # Ignores cache
+    )
+    elapsed = time.time() - start
+    
+    logger.info(f"\n✓ Regenerated explanation in {elapsed:.2f}s")
+    logger.info(f"   Confidence: {explanation.confidence}")
+    logger.info(f"   Preview: {explanation.explanation[:150]}...")
 
 if __name__ == "__main__":
     # Run all tests
     try:
+        logger.info("\n" + "=" * 80)
+        logger.info("SIMILARITY ENGINE TEST SUITE")
+        logger.info("Testing across all 37 companies in database")
+        logger.info("=" * 80)
+        
+        # Basic similarity tests (no LLM calls)
         test_single_dimension()
         test_multi_dimensional()
         test_target_company()
         test_specific_dimensions()
         test_explain_similarity()
-        test_confidence_scores()  # NEW
-        test_llm_explanation()    # NEW
-        test_multiple_explanations()  # NEW
+        test_confidence_scores()
+        
+        # LLM explanation tests (may use API or cache)
+        test_llm_explanation()
+        test_multiple_explanations()
+        test_explanation_caching()
+        
+        # Advanced features
+        test_force_refresh()
         
         logger.info("\n" + "=" * 80)
-        logger.info("✓ ALL TESTS COMPLETED")
+        logger.info("✓ ALL TESTS COMPLETED SUCCESSFULLY")
         logger.info("=" * 80)
+        
+        logger.info("\n📊 Summary:")
+        logger.info("   - Tested similarity search across all dimensions")
+        logger.info("   - Validated confidence scoring")
+        logger.info("   - Generated LLM explanations with caching")
+        logger.info("   - All cached explanations saved to ./outputs/explanations/")
         
     except Exception as e:
         logger.error(f"\n✗ Test failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise
