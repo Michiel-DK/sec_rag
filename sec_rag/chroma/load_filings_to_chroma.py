@@ -109,7 +109,9 @@ def detect_section(text: str) -> str:
         'Item 10 - Directors and Officers': [
             r'ITEM\s*10[\.\s:]',
             r'DIRECTORS.*EXECUTIVE\s+OFFICERS',
-            r'EXECUTIVE\s+OFFICERS.*DIRECTORS'
+            r'EXECUTIVE\s+OFFICERS.*DIRECTORS',
+            r'SIGNATURES',
+            r'/s/',
         ],
         'Item 11 - Executive Compensation': [
             r'ITEM\s*11',
@@ -224,12 +226,16 @@ def detect_director_info(text: str) -> bool:
     director_keywords = [
         'director', 'officer', 'board of directors', 'executive officer',
         'chief executive', 'chief financial', 'president', 'vice president',
-        'compensation committee', 'audit committee', 'governance'
+        'compensation committee', 'audit committee', 'governance', '/s/'
     ]
     
     text_lower = text.lower()
     keyword_count = sum(1 for keyword in director_keywords if keyword in text_lower)
-    return keyword_count >= 2
+    
+    # Also check for signature pattern
+    has_signature = bool(re.search(r'/s/\s*[A-Za-z]', text))
+    
+    return keyword_count >= 2 or has_signature
 
 def detect_risk_category(text: str) -> str:
     """Detect the category of risk factor."""
