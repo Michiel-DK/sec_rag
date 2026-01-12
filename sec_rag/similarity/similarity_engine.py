@@ -263,20 +263,44 @@ class SimilarityEngine:
     ) -> List[CompanyRanking]:
         """
         Find companies similar across multiple dimensions.
-        NOW WITH CONFIDENCE SCORES!
+        NOW WITH CONFIDENCE SCORES AND PROPER DIMENSION FILTERING!
         """
-        # Get dimensions to compare
+        # Get dimensions to compare - WITH PROPER VALIDATION
         if dimensions is None:
             dimension_queries = ComparisonDimensions.all_dimensions()
+            logger.info("No dimensions specified - using all 5 dimensions")
         else:
-            dimension_queries = [
-                ComparisonDimensions.get_dimension(d) for d in dimensions
-            ]
+            # FIX: Normalize dimension names and validate
+            normalized_dims = [d.lower().strip().replace(' ', '_') for d in dimensions]
+            dimension_queries = []
+            
+            valid_dimensions = {
+                'business_model', 'risk_profile', 'financial_structure',
+                'geographic_footprint', 'legal_matters'
+            }
+            
+            for dim in normalized_dims:
+                if dim not in valid_dimensions:
+                    logger.warning(f"Invalid dimension '{dim}', skipping. Valid: {valid_dimensions}")
+                    continue
+                
+                try:
+                    dim_query = ComparisonDimensions.get_dimension(dim)
+                    dimension_queries.append(dim_query)
+                    logger.debug(f"Added dimension: {dim}")
+                except ValueError as e:
+                    logger.warning(f"Could not load dimension '{dim}': {e}")
+            
+            if not dimension_queries:
+                logger.warning("No valid dimensions provided, falling back to all dimensions")
+                dimension_queries = ComparisonDimensions.all_dimensions()
+            else:
+                logger.info(f"✓ Filtered to {len(dimension_queries)} dimension(s): {[d.dimension for d in dimension_queries]}")
         
         logger.info("=" * 80)
         logger.info(f"Finding similar companies")
         logger.info(f"  Target: {target_ticker or 'All companies'}")
-        logger.info(f"  Dimensions: {[d.dimension for d in dimension_queries]}")
+        logger.info(f"  Active Dimensions ({len(dimension_queries)}): {[d.dimension for d in dimension_queries]}")
         logger.info("=" * 80)
         
         exclude = [target_ticker] if target_ticker else []
@@ -284,11 +308,13 @@ class SimilarityEngine:
         # Search each dimension
         all_results = {}
         for dim_query in dimension_queries:
+            logger.info(f"Searching dimension: {dim_query.dimension}")
             similarities = self.find_similar_by_dimension(dim_query, exclude)
             all_results[dim_query.dimension] = {
                 'results': similarities,
                 'weight': dim_query.weight
             }
+            logger.info(f"  ✓ Found {len(similarities)} matches in {dim_query.dimension}")
         
         # Aggregate scores across dimensions
         company_scores = defaultdict(lambda: {
@@ -324,10 +350,12 @@ class SimilarityEngine:
                 overall_score=data['weighted_score'],
                 dimension_scores=data['dimension_scores'],
                 total_matches=data['total_matches'],
-                confidence=confidence  # NEW
+                confidence=confidence
             ))
         
         rankings.sort(key=lambda x: x.overall_score, reverse=True)
+        
+        logger.info(f"\n✓ Returning top {min(top_n, len(rankings))} similar companies")
         
         return rankings[:top_n]
 
