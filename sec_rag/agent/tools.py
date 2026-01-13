@@ -9,6 +9,7 @@ from langchain.tools import Tool
 
 from sec_rag.similarity.similarity_engine import SimilarityEngine
 from sec_rag.llm.similarity_explainer import SimilarityExplainer
+from sec_rag.chroma.extract_people import extract_people, format_people_output
 
 
 def create_agent_tools(
@@ -248,6 +249,75 @@ def create_agent_tools(
         except Exception as e:
             return f"Error: {str(e)}"
     
+    # Tool 6: Extract directors and officers
+    def get_directors_officers_impl(ticker: str = "") -> str:
+        """Extract directors and officers from a company's 10-K filing."""
+        try:
+            if not ticker:
+                return "Error: ticker is required (e.g., 'AAPL')"
+            
+            ticker = ticker.upper().strip()
+            
+            # Search for Item 10 - Directors and Officers sections
+            query = "directors executive officers board of directors signature"
+            
+            docs = similarity_engine.vector_store.similarity_search(
+                query,
+                k=10,
+                filter={"ticker": ticker}
+            )
+            
+            if not docs:
+                return f"No director/officer information found for {ticker}."
+            
+            # Filter for Item 10 or sections with director info
+            relevant_docs = [
+                doc for doc in docs 
+                if 'Item 10' in doc.metadata.get('section', '') or
+                   doc.metadata.get('contains_director_info', False) or
+                   '/s/' in doc.page_content.lower()
+            ]
+            
+            if not relevant_docs:
+                relevant_docs = docs[:5]
+            
+            # Combine text from relevant chunks
+            combined_text = '\n\n'.join(doc.page_content for doc in relevant_docs[:5])
+            
+            # Extract people
+            people = extract_people(combined_text)
+            
+            if not people:
+                return f"Could not extract structured director/officer information for {ticker}. Try using retrieve_company_information with query='directors officers board'."
+            
+            # Format output
+            return format_people_output(people, ticker)
+            
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    def get_directors_officers(input_str: str) -> str:
+        """Wrapper that parses JSON input."""
+        try:
+            # Handle dict input (from agent)
+            if isinstance(input_str, dict):
+                return get_directors_officers_impl(**input_str)
+            
+            # Try to parse as JSON first
+            try:
+                params = json.loads(input_str)
+            except:
+                # If not JSON, try to parse as key=value format
+                params = {}
+                for part in input_str.split(','):
+                    if '=' in part:
+                        key, val = part.split('=', 1)
+                        params[key.strip()] = val.strip().strip("'\"")
+            
+            return get_directors_officers_impl(**params)
+        except Exception as e:
+            return f"Error parsing input: {str(e)}"
+    
     # Create tools list
     return [
         Tool(
@@ -313,5 +383,23 @@ Args:
     or 'all' for all companies (default: 'all')
 
 Example: industry='tech'"""
+        ),
+        
+        Tool(
+            name="get_directors_officers",
+            func=get_directors_officers,
+            description="""Extract directors and officers from a company's 10-K filing.
+            
+This tool identifies and extracts structured information about:
+- Executive officers (CEO, CFO, etc.)
+- Board of Directors
+- Other key officers
+
+Args:
+  ticker (str, required): Company ticker (e.g., 'AAPL')
+
+Returns: Formatted list of people with names, titles, and roles
+
+Example: ticker='AAPL'"""
         ),
     ]
