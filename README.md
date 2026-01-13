@@ -7,6 +7,9 @@ AI-powered company analysis using SEC 10-K filings and vector similarity search.
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
+
+# For development (includes Jupyter, testing tools, etc.):
+# pip install -r requirements-dev.txt
 ```
 
 ### 2. Set Up Environment
